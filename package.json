@@ -1,15 +1,8 @@
 {
-  "name": "esp01-base44-relay",
-  "version": "1.0.0",
-  "description": "Relay server ESP01 to Base44 Entity API",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
+  "type": "module",
+  "scripts": { "start": "node index.js" },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.0",
+    "node-fetch": "^3.3.0"
   }
 }
