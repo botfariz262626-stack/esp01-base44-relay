@@ -1,93 +1,76 @@
-// =============================================
-// RELAY SERVER untuk ESP01 → Base44
-// Deploy gratis di Render.com (Node.js web service)
-// =============================================
+import express from "express";
+import fetch from "node-fetch";
 
-const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ==== KONFIGURASI — isi setelah deploy ====
-const BASE44_APP_ID  = process.env.BASE44_APP_ID  || 'YOUR_APP_ID';
-const BASE44_API_KEY = process.env.BASE44_API_KEY  || 'YOUR_API_KEY';
-const BASE44_BASE    = `https://app.base44.com/api/apps/${BASE44_APP_ID}/entities`;
+const B44_BASE = "https://base44.app/api/apps/69dcf71c53c101c1159af4b0/entities";
+const headers = {
+  "Content-Type": "application/json",
+  "api_key": "619e574ca3d44fd880966002af9810c2",
+};
 
-app.use(express.json());
-
-// ── Helper: headers untuk Base44 ──────────────────
-function b44Headers() {
-  return {
-    'Content-Type': 'application/json',
-    'api_key': BASE44_API_KEY
+// ESP kirim data sensor → simpan ke SensorData
+app.get("/functions/receiveData", async (req, res) => {
+  const q = req.query;
+  const body = {
+    pv:       parseFloat(q.pv)  || 0,
+    sp:       parseFloat(q.sp)  || 0,
+    output:   parseInt(q.out)   || 0,
+    mode:     q.mode === "P" ? "PID" : "MANUAL",
+    running:  q.run === "1",
+    alarm_hi: q.ah === "1",
+    alarm_lo: q.al === "1",
+    kp:       parseFloat(q.kp)  || 0,
+    ki:       parseFloat(q.ki)  || 0,
+    kd:       parseFloat(q.kd)  || 0,
+    pmax:     parseInt(q.pm)    || 240,
+    rlim:     parseInt(q.rl)    || 25,
   };
-}
 
-// ── Helper: fetch (Node 18+ native fetch) ────────
-async function b44Fetch(path, method = 'GET', body = null) {
-  const opts = { method, headers: b44Headers() };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${BASE44_BASE}${path}`, opts);
-  const text = await res.text();
-  try { return JSON.parse(text); }
-  catch { return { raw: text }; }
-}
+  await fetch(`${B44_BASE}/SensorData`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
 
-// ============================================================
-// POST /data  — terima data dari ESP01, simpan ke SensorData
-// Query params: pv, sp, out, mode, run, ah, al, kp, ki, kd, pm, rl
-// ============================================================
-app.get('/data', async (req, res) => {
-  try {
-    const q = req.query;
-    const record = {
-      pv:       parseFloat(q.pv   ?? 0),
-      sp:       parseFloat(q.sp   ?? 0),
-      out:      parseInt(  q.out  ?? 0),
-      mode:     q.mode ?? 'P',
-      run:      parseInt(  q.run  ?? 0),
-      alarm_hi: parseInt(  q.ah   ?? 0),
-      alarm_lo: parseInt(  q.al   ?? 0),
-      kp:       parseFloat(q.kp   ?? 0),
-      ki:       parseFloat(q.ki   ?? 0),
-      kd:       parseFloat(q.kd   ?? 0),
-      pmax:     parseInt(  q.pm   ?? 240),
-      rlim:     parseInt(  q.rl   ?? 25)
-    };
-
-    const result = await b44Fetch('/SensorData', 'POST', record);
-    console.log('[DATA] saved:', JSON.stringify(record));
-    res.json({ ok: true, id: result.id });
-  } catch (e) {
-    console.error('[DATA ERROR]', e.message);
-    res.status(500).json({ ok: false, err: e.message });
-  }
+  res.json({ ok: true });
 });
 
-// ============================================================
-// GET /command  — ambil command terbaru yg belum dieksekusi
-// ESP01 polling endpoint ini setiap CMD_INTERVAL
-// ============================================================
-app.get('/command', async (req, res) => {
-  try {
-    // Ambil command dengan executed=false, terbaru duluan
-    const list = await b44Fetch('/Command?executed=false&sort=-created_date&limit=1');
-    
-    let cmd = null;
-    if (Array.isArray(list) && list.length > 0) {
-      cmd = list[0];
-      // Mark as executed
-      await b44Fetch(`/Command/${cmd.id}`, 'PUT', { executed: true });
-      console.log('[CMD] dispatched:', cmd.id);
-    }
+// ESP poll command → ambil command terbaru dari DeviceCommand
+app.get("/functions/getCommand", async (req, res) => {
+  const resp = await fetch(
+    `${B44_BASE}/DeviceCommand?consumed=false&_sort=-created_date&_limit=1`,
+    { headers }
+  );
+  const list = await resp.json();
 
-    res.json({ cmd });
-  } catch (e) {
-    console.error('[CMD ERROR]', e.message);
-    res.status(500).json({ cmd: null, err: e.message });
+  if (!list || list.length === 0) {
+    return res.json({ cmd: null });
   }
+
+  const cmd = list[0];
+
+  // Mark consumed supaya tidak dieksekusi lagi
+  await fetch(`${B44_BASE}/DeviceCommand/${cmd.id}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ consumed: true }),
+  });
+
+  res.json({ cmd });
 });
 
-// Health check
-app.get('/', (req, res) => res.send('ESP01 Relay Server OK'));
+app.listen(PORT, () => console.log(`Relay on port ${PORT}`));
+Yang perlu ada di Railway repo:
 
-app.listen(PORT, () => console.log(`Relay running on port ${PORT}`));
+package.json:
+
+{
+  "type": "module",
+  "scripts": { "start": "node index.js" },
+  "dependencies": {
+    "express": "^4.18.0",
+    "node-fetch": "^3.3.0"
+  }
+}
